@@ -96,56 +96,60 @@ def cargar_geojson():
 
 @st.cache_data(show_spinner=False)
 @st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False)
 def cargar_datos_polars(patron_archivos):
-    # Buscamos todos los archivos que coincidan con el patrón (ej: data_part_*.parquet)
     archivos = glob.glob(patron_archivos)
     
     if not archivos:
         return None, None
 
     try:
-        # Polars lee la lista de archivos y los une automáticamente en un solo DF
+        # 1. Leemos los archivos
         df = pl.read_parquet(archivos)
 
-        # --- A PARTIR DE AQUÍ EL CÓDIGO ES IGUAL AL ORIGINAL ---
-        cols_posibles = [
-            'ANNO', 'TRIMESTRE', 
-            'ID_DEPARTAMENTO', 'DEPARTAMENTO', 
-            'ID_MUNICIPIO', 'MUNICIPIO', 
-            'ID_EMPRESA', 'EMPRESA', 
-            'ID_SEGMENTO', 'SEGMENTO',
-            'ID_SERVICIO_PAQUETE', 'SERVICIO_PAQUETE', 
-            'ID_TECNOLOGIA', 'TECNOLOGIA',
-            'VELOCIDAD_EFECTIVA_DOWNSTREAM', 'VELOCIDAD_EFECTIVA_UPSTREAM',
-            'CANTIDAD_LINEAS_ACCESOS',
-            'VALOR_FACTURADO_O_COBRADO', 
-            'OTROS_VALORES_FACTURADOS'
-        ]
-        cols_existentes = [c for c in cols_posibles if c in df.columns]
-        df = df.select(cols_existentes)
+        # 2. Seleccionamos SOLO lo necesario y optimizamos tipos (AQUÍ ESTÁ LA MAGIA)
+        # Convertir Strings a Categorical reduce el uso de RAM hasta en un 80%
+        df = df.select([
+            pl.col('ANNO').cast(pl.Int16), # Año cabe en Int16
+            pl.col('TRIMESTRE').cast(pl.Int8),
+            pl.col('ID_DEPARTAMENTO'), # Lo necesitamos para el mapa
+            pl.col('DEPARTAMENTO').cast(pl.Categorical),
+            pl.col('MUNICIPIO').cast(pl.Categorical),
+            pl.col('EMPRESA').cast(pl.Categorical),
+            pl.col('SEGMENTO').cast(pl.Categorical),
+            pl.col('SERVICIO_PAQUETE').cast(pl.Categorical),
+            pl.col('TECNOLOGIA').cast(pl.Categorical),
+            pl.col('VELOCIDAD_EFECTIVA_DOWNSTREAM'),
+            pl.col('VELOCIDAD_EFECTIVA_UPSTREAM'),
+            pl.col('CANTIDAD_LINEAS_ACCESOS'),
+            pl.col('VALOR_FACTURADO_O_COBRADO'), 
+            pl.col('OTROS_VALORES_FACTURADOS')
+        ])
 
+        # 3. Transformaciones
         df = df.with_columns([
             pl.col("VALOR_FACTURADO_O_COBRADO").fill_null(0),
             pl.col("OTROS_VALORES_FACTURADOS").fill_null(0),
             pl.col("CANTIDAD_LINEAS_ACCESOS").fill_null(0),
             pl.col("VELOCIDAD_EFECTIVA_DOWNSTREAM").fill_null(0),
             pl.format("{}-T{}", pl.col("ANNO"), pl.col("TRIMESTRE")).alias("PERIODO"),
+            # Convertimos a string solo al final y para la columna específica del mapa
             pl.col("ID_DEPARTAMENTO").cast(pl.String).str.zfill(2).alias("ID_DEPTO_MAPA")
         ])
 
+        # Calculamos Valor Total
         df = df.with_columns(
             (pl.col("VALOR_FACTURADO_O_COBRADO") + pl.col("OTROS_VALORES_FACTURADOS")).alias("VALOR_TOTAL")
         )
 
+        # 4. Extraemos las opciones (Usamos casting a string temporal para obtener listas limpias)
         opciones = {
             'anos': df["ANNO"].unique().sort().to_list(),
-            'deptos': df["DEPARTAMENTO"].unique().sort().to_list(),
-            'empresas': df["EMPRESA"].unique().sort().to_list(),
-            'paquetes': df["SERVICIO_PAQUETE"].unique().sort().to_list(),
-            'tecnologias': df["TECNOLOGIA"].unique().sort().to_list(),
-            'min_val_facturado': df["VALOR_FACTURADO_O_COBRADO"].min(),
+            'deptos': df["DEPARTAMENTO"].unique().cast(pl.String).sort().to_list(),
+            'empresas': df["EMPRESA"].unique().cast(pl.String).sort().to_list(),
+            'paquetes': df["SERVICIO_PAQUETE"].unique().cast(pl.String).sort().to_list(),
+            'tecnologias': df["TECNOLOGIA"].unique().cast(pl.String).sort().to_list(),
             'max_val_facturado': df["VALOR_FACTURADO_O_COBRADO"].max(),
-            'min_otros': df["OTROS_VALORES_FACTURADOS"].min(),
             'max_otros': df["OTROS_VALORES_FACTURADOS"].max()
         }
 
@@ -673,4 +677,5 @@ st.markdown("""
     <p>👨‍💻 Desarrollado por <b>Pedro Jose Leal Mesa</b></p>
     <p>ℹ️ <i>Nota: Los datos usados son los datos que no presentaron inconvenientes de consistencia.</i></p>
 </div>
+
 """, unsafe_allow_html=True)
